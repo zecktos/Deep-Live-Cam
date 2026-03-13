@@ -1111,7 +1111,7 @@ def create_webcam_preview(camera_index: int):
             )
 
         # If a global NDI sender is available, mirror the processed frame.
-        if NDI_SENDER is not None and not output_conflicts_with_input:
+        if NDI_SENDER is not None :
             NDI_SENDER.send_frame(temp_frame)
 
         image = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
