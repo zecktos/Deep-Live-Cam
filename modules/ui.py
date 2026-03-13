@@ -88,6 +88,29 @@ target_label_dict_live = {}
 
 img_ft, vid_ft = modules.globals.file_types
 
+# Optional NDI output (single shared sender for the whole app)
+try:
+    from modules.extra.ndi_output import NdiVideoSender, is_ndi_output_available
+except Exception:  # pragma: no cover
+    NdiVideoSender = None  # type: ignore
+
+    def is_ndi_output_available() -> bool:  # type: ignore
+        return False
+
+NDI_SENDER: "NdiVideoSender | None" = None
+
+if (
+    getattr(modules.globals, "ndi_output_enabled", False)
+    and is_ndi_output_available()
+    and NdiVideoSender is not None
+):
+    # Create and open a single sender at application start.
+    _stream_name = getattr(
+        modules.globals, "ndi_output_stream_name", "Deep-Live-Cam"
+    )
+    _sender = NdiVideoSender(stream_name=_stream_name)
+    if _sender.start(PREVIEW_DEFAULT_WIDTH, PREVIEW_DEFAULT_HEIGHT, 30):
+        NDI_SENDER = _sender
 
 def init(start: Callable[[], None], destroy: Callable[[], None], lang: str) -> ctk.CTk:
     global ROOT, PREVIEW, _
@@ -1058,6 +1081,10 @@ def create_webcam_preview(camera_index: int):
                 (0, 255, 0),
                 2,
             )
+
+        # If a global NDI sender is available, mirror the processed frame.
+        if NDI_SENDER is not None and not output_conflicts_with_input:
+            NDI_SENDER.send_frame(temp_frame)
 
         image = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(image)
