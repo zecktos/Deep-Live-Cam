@@ -34,16 +34,6 @@ import platform
 if platform.system() == "Windows":
     from pygrabber.dshow_graph import FilterGraph
 
-# Optional NDI input (kept isolated to extra modules)
-try:
-    from modules.extra.ndi_input import NdiVideoCapturer, is_ndi_available as is_ndi_input_available
-except Exception:  # pragma: no cover
-    NdiVideoCapturer = None  # type: ignore
-
-    def is_ndi_input_available() -> bool:  # type: ignore
-        return False
-
-
 ROOT = None
 POPUP = None
 POPUP_LIVE = None
@@ -962,14 +952,6 @@ def get_available_cameras():
             if not camera_names:
                 return [], ["No cameras found"]
 
-            # Optionally append NDI pseudo-camera
-            if (
-                getattr(modules.globals, "ndi_input_enabled", False)
-                and is_ndi_input_available()
-            ):
-                camera_indices.append(getattr(modules.globals, "ndi_camera_index", -100))
-                camera_names.append("NDI (cyndilib)")
-
             return camera_indices, camera_names
 
         except Exception as e:
@@ -1007,34 +989,15 @@ def get_available_cameras():
         if not camera_names:
             return [], ["No cameras found"]
 
-        # Optionally append NDI pseudo-camera
-        if (
-            getattr(modules.globals, "ndi_input_enabled", False)
-            and is_ndi_input_available()
-        ):
-            camera_indices.append(getattr(modules.globals, "ndi_camera_index", -100))
-            camera_names.append("NDI (cyndilib)")
-
         return camera_indices, camera_names
 
 
 def create_webcam_preview(camera_index: int):
     global preview_label, PREVIEW, LIVE_SOURCE_FACE
 
-    use_ndi = (
-        getattr(modules.globals, "ndi_input_enabled", False)
-        and is_ndi_input_available()
-        and camera_index == getattr(modules.globals, "ndi_camera_index", -100)
-        and NdiVideoCapturer is not None
-    )
-
-    cap = (
-        NdiVideoCapturer(getattr(modules.globals, "ndi_input_source_name", None))
-        if use_ndi
-        else VideoCapturer(camera_index)
-    )
+    cap = VideoCapturer(camera_index)
     if not cap.start(PREVIEW_DEFAULT_WIDTH, PREVIEW_DEFAULT_HEIGHT, 60):
-        update_status("Failed to start NDI input" if use_ndi else "Failed to start camera")
+        update_status("Failed to start camera")
         return
 
     preview_label.configure(width=PREVIEW_DEFAULT_WIDTH, height=PREVIEW_DEFAULT_HEIGHT)
