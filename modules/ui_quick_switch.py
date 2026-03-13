@@ -33,7 +33,7 @@ def open_quick_faces_window(
 
     QUICK_FACE_WINDOW = ctk.CTkToplevel(root)
     QUICK_FACE_WINDOW.title("Quick Faces")
-    QUICK_FACE_WINDOW.geometry("450x420")
+    QUICK_FACE_WINDOW.geometry("450x800")
     QUICK_FACE_WINDOW.focus()
 
     QUICK_FACE_SLOT_THUMBS = {}
