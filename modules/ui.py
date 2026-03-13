@@ -9,6 +9,7 @@ import time
 import json
 import modules.globals
 import modules.metadata
+from modules import ui_quick_switch
 from modules.face_analyser import (
     get_one_face,
     get_unique_faces_from_target_image,
@@ -42,9 +43,12 @@ except Exception:  # pragma: no cover
     def is_ndi_input_available() -> bool:  # type: ignore
         return False
 
+
 ROOT = None
 POPUP = None
 POPUP_LIVE = None
+QUICK_FACE_SLOT_THUMBS = {}
+QUICK_FACE_SLOT_LABELS = {}
 ROOT_HEIGHT = 800
 ROOT_WIDTH = 600
 
@@ -85,6 +89,9 @@ popup_status_label_live = None
 source_label_dict = {}
 source_label_dict_live = {}
 target_label_dict_live = {}
+
+# Cached face for live preview; updated when source image or quick slot changes.
+LIVE_SOURCE_FACE = None
 
 img_ft, vid_ft = modules.globals.file_types
 
@@ -139,6 +146,8 @@ def save_switch_states():
         "show_fps": modules.globals.show_fps,
         "mouth_mask": modules.globals.mouth_mask,
         "show_mouth_mask_box": modules.globals.show_mouth_mask_box,
+        "source_slots": modules.globals.source_slots,
+        "active_source_slot": modules.globals.active_source_slot,
     }
     with open("switch_states.json", "w") as f:
         json.dump(switch_states, f)
@@ -164,6 +173,8 @@ def load_switch_states():
         modules.globals.show_mouth_mask_box = switch_states.get(
             "show_mouth_mask_box", False
         )
+        modules.globals.source_slots = switch_states.get("source_slots", [None] * 10)
+        modules.globals.active_source_slot = switch_states.get("active_source_slot", None)
     except FileNotFoundError:
         # If the file doesn't exist, use default values
         pass
@@ -357,17 +368,25 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
     start_button = ctk.CTkButton(
         root, text=_("Start"), cursor="hand2", command=lambda: analyze_target(start, root)
     )
-    start_button.place(relx=0.15, rely=0.86, relwidth=0.2, relheight=0.05)
+    start_button.place(relx=0.05, rely=0.86, relwidth=0.18, relheight=0.05)
 
     stop_button = ctk.CTkButton(
         root, text=_("Destroy"), cursor="hand2", command=lambda: destroy()
     )
-    stop_button.place(relx=0.4, rely=0.86, relwidth=0.2, relheight=0.05)
+    stop_button.place(relx=0.27, rely=0.86, relwidth=0.18, relheight=0.05)
 
     preview_button = ctk.CTkButton(
         root, text=_("Preview"), cursor="hand2", command=lambda: toggle_preview()
     )
-    preview_button.place(relx=0.65, rely=0.86, relwidth=0.2, relheight=0.05)
+    preview_button.place(relx=0.49, rely=0.86, relwidth=0.18, relheight=0.05)
+
+    quick_faces_button = ctk.CTkButton(
+        root,
+        text=_("Quick Faces"),
+        cursor="hand2",
+        command=lambda: open_quick_faces_window(root),
+    )
+    quick_faces_button.place(relx=0.71, rely=0.86, relwidth=0.24, relheight=0.05)
 
     # --- Camera Selection ---
     camera_label = ctk.CTkLabel(root, text=_("Select Camera:"))
@@ -695,7 +714,7 @@ def update_tumbler(var: str, value: bool) -> None:
 
 
 def select_source_path() -> None:
-    global RECENT_DIRECTORY_SOURCE, img_ft, vid_ft
+    global RECENT_DIRECTORY_SOURCE, img_ft, vid_ft, LIVE_SOURCE_FACE
 
     PREVIEW.withdraw()
     source_path = ctk.filedialog.askopenfilename(
@@ -705,6 +724,8 @@ def select_source_path() -> None:
     )
     if is_image(source_path):
         modules.globals.source_path = source_path
+        modules.globals.active_source_slot = None  # manual selection cancels quick slot
+        LIVE_SOURCE_FACE = None  # force recompute for live preview
         RECENT_DIRECTORY_SOURCE = os.path.dirname(modules.globals.source_path)
         image = render_image_preview(modules.globals.source_path, (200, 200))
         source_label.configure(image=image)
@@ -889,7 +910,7 @@ def update_preview(frame_number: int = 0) -> None:
 
 
 def webcam_preview(root: ctk.CTk, camera_index: int):
-    global POPUP_LIVE
+    global POPUP_LIVE, LIVE_SOURCE_FACE
 
     if POPUP_LIVE and POPUP_LIVE.winfo_exists():
         update_status("Source x Target Mapper is already open.")
@@ -900,6 +921,8 @@ def webcam_preview(root: ctk.CTk, camera_index: int):
         if modules.globals.source_path is None:
             update_status("Please select a source image first")
             return
+        # Initialize cached source face from current source path or active quick slot.
+        LIVE_SOURCE_FACE = None
         create_webcam_preview(camera_index)
     else:
         modules.globals.source_target_map = []
@@ -996,7 +1019,7 @@ def get_available_cameras():
 
 
 def create_webcam_preview(camera_index: int):
-    global preview_label, PREVIEW
+    global preview_label, PREVIEW, LIVE_SOURCE_FACE
 
     use_ndi = (
         getattr(modules.globals, "ndi_input_enabled", False)
@@ -1018,7 +1041,6 @@ def create_webcam_preview(camera_index: int):
     PREVIEW.deiconify()
 
     frame_processors = get_frame_processors_modules(modules.globals.frame_processors)
-    source_image = None
     prev_time = time.time()
     fps_update_interval = 0.5
     frame_count = 0
@@ -1045,15 +1067,21 @@ def create_webcam_preview(camera_index: int):
             )
 
         if not modules.globals.map_faces:
-            if source_image is None and modules.globals.source_path:
-                source_image = get_one_face(cv2.imread(modules.globals.source_path))
+            # Lazily compute / recompute source face using current source_path.
+            if LIVE_SOURCE_FACE is None and modules.globals.source_path:
+                try:
+                    LIVE_SOURCE_FACE = get_one_face(
+                        cv2.imread(modules.globals.source_path)
+                    )
+                except Exception:
+                    LIVE_SOURCE_FACE = None
 
             for frame_processor in frame_processors:
                 if frame_processor.NAME == "DLC.FACE-ENHANCER":
                     if modules.globals.fp_ui["face_enhancer"]:
                         temp_frame = frame_processor.process_frame(None, temp_frame)
                 else:
-                    temp_frame = frame_processor.process_frame(source_image, temp_frame)
+                    temp_frame = frame_processor.process_frame(LIVE_SOURCE_FACE, temp_frame)
         else:
             modules.globals.target_path = None
             for frame_processor in frame_processors:
@@ -1162,6 +1190,34 @@ def clear_source_target_images(map: list):
     for button_num in list(target_label_dict_live.keys()):
         target_label_dict_live[button_num].destroy()
         del target_label_dict_live[button_num]
+
+
+def open_quick_faces_window(root: ctk.CTk) -> None:
+    def _get_recent_dir():
+        return RECENT_DIRECTORY_SOURCE
+
+    def _set_recent_dir(v):
+        global RECENT_DIRECTORY_SOURCE
+        RECENT_DIRECTORY_SOURCE = v
+
+    def _set_source_preview(path: str) -> None:
+        image = render_image_preview(path, (200, 200))
+        source_label.configure(image=image)
+
+    def _invalidate_live_source_face() -> None:
+        global LIVE_SOURCE_FACE
+        LIVE_SOURCE_FACE = None
+
+    ui_quick_switch.open_quick_faces_window(
+        root=root,
+        img_filetype=img_ft,
+        get_recent_directory_source=_get_recent_dir,
+        set_recent_directory_source=_set_recent_dir,
+        save_switch_states=save_switch_states,
+        update_status=update_status,
+        set_source_preview_image=_set_source_preview,
+        invalidate_live_source_face=_invalidate_live_source_face,
+    )
 
 
 def refresh_data(map: list):

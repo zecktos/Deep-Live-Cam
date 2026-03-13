@@ -66,6 +66,10 @@ face_swapper_enabled: bool = True # General toggle for the swapper processor
 opacity: float = 1.0              # Blend factor for the swapped face (0.0-1.0)
 sharpness: float = 0.0            # Sharpness enhancement for swapped face (0.0-1.0+)
 
+# Quick Face Slots (for live mode)
+source_slots: list[str | None] = [None] * 10  # Up to 10 preconfigured source images
+active_source_slot: int | None = None         # Currently selected quick slot index (0-9)
+
 # Mouth Mask Options
 mouth_mask: bool = False           # Enable mouth area masking/pasting
 show_mouth_mask_box: bool = False  # Visualize the mouth mask area (for debugging)
