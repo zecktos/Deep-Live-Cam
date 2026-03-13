@@ -48,7 +48,7 @@ ndi_input_source_name: str | None = None
 ndi_camera_index: int = -100  # Sentinel index for pseudo NDI camera
 
 # NDI Output (optional; requires cyndilib + NDI runtime)
-ndi_output_enabled: bool = False
+ndi_output_enabled: bool = True
 ndi_output_stream_name: str = "Deep-Live-Cam"
 
 # System Configuration
