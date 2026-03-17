@@ -1,1 +1,1 @@
-python run.py --execution-provider cuda
+uv run run.py --execution-provider cuda
