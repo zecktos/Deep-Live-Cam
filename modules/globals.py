@@ -65,6 +65,13 @@ sharpness: float = 0.0            # Sharpness enhancement for swapped face (0.0-
 source_slots: list[str | None] = [None] * 10  # Up to 10 preconfigured source images
 active_source_slot: int | None = None         # Currently selected quick slot index (0-9)
 
+# Generic trigger bindings for quick face slots.
+# Each entry can hold backend-agnostic trigger metadata (e.g. MIDI note number, key code, OSC address).
+quick_face_triggers: list[dict | None] = [None] * 10
+
+# Selected MIDI input port name for quick face triggers (None = automatic/default).
+quick_face_midi_port: str | None = None
+
 # Mouth Mask Options
 mouth_mask: bool = False           # Enable mouth area masking/pasting
 show_mouth_mask_box: bool = False  # Visualize the mouth mask area (for debugging)

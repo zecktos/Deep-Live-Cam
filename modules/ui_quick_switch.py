@@ -6,6 +6,13 @@ from PIL import Image, ImageOps
 
 import modules.globals
 from modules.utilities import is_image
+from modules.extra.triggers import TriggerType, shutdown_sources, register_source
+from modules.extra.midi_source import MidiTriggerSource
+
+try:
+    import mido
+except Exception:  # pragma: no cover - optional dependency
+    mido = None  # type: ignore
 
 
 QUICK_FACE_WINDOW: Optional[ctk.CTkToplevel] = None
@@ -39,6 +46,63 @@ def open_quick_faces_window(
     QUICK_FACE_SLOT_THUMBS = {}
     QUICK_FACE_SLOT_PICKERS = {}
 
+    # --- MIDI input device selection (for quick face triggers) ---
+    midi_ports: list[str] = []
+    if mido is not None:
+        try:
+            midi_ports = list(mido.get_input_names())
+        except Exception:
+            midi_ports = []
+
+    current_port = modules.globals.quick_face_midi_port
+
+    values: list[str] = []
+    if midi_ports:
+        values = ["Auto"] + midi_ports
+    else:
+        values = ["Auto"]
+
+    if current_port and current_port in midi_ports:
+        initial_value = current_port
+    else:
+        initial_value = "Auto"
+
+    midi_var = ctk.StringVar(value=initial_value)
+
+    def on_midi_port_change(choice: str) -> None:
+        # Update global selection
+        if choice == "Auto":
+            modules.globals.quick_face_midi_port = None
+        else:
+            modules.globals.quick_face_midi_port = choice
+
+        from modules.ui import save_switch_states
+
+        save_switch_states()
+
+        # Restart MIDI source so the new port takes effect immediately.
+        try:
+            shutdown_sources()
+            register_source(MidiTriggerSource())
+        except Exception:
+            pass
+
+    midi_label = ctk.CTkLabel(
+        QUICK_FACE_WINDOW,
+        text="MIDI Input",
+        anchor="w",
+    )
+    midi_label.grid(row=0, column=0, padx=(12, 4), pady=(8, 4), sticky="w")
+
+    midi_menu = ctk.CTkOptionMenu(
+        QUICK_FACE_WINDOW,
+        values=values,
+        variable=midi_var,
+        command=on_midi_port_change,
+        width=200,
+    )
+    midi_menu.grid(row=0, column=1, columnspan=3, padx=(4, 12), pady=(8, 4), sticky="ew")
+
     def make_set_command(idx: int):
         return lambda: configure_quick_face_slot(
             idx,
@@ -64,7 +128,9 @@ def open_quick_faces_window(
             width=80,
             anchor="w",
         )
-        slot_label.grid(row=i, column=0, padx=(12, 8), pady=6, sticky="w")
+        # Offset rows by 1 to account for the MIDI selector row.
+        row_index = i + 1
+        slot_label.grid(row=row_index, column=0, padx=(12, 4), pady=6, sticky="w")
 
         picker_frame = ctk.CTkFrame(
             QUICK_FACE_WINDOW,
@@ -75,7 +141,7 @@ def open_quick_faces_window(
             border_color=("gray75", "gray28"),
             corner_radius=6,
         )
-        picker_frame.grid(row=i, column=1, padx=8, pady=6)
+        picker_frame.grid(row=row_index, column=1, padx=4, pady=6)
         picker_frame.grid_propagate(False)
 
         picker_label = ctk.CTkLabel(picker_frame, text="")
@@ -86,13 +152,65 @@ def open_quick_faces_window(
         picker_frame.bind("<Button-1>", lambda _e, cmd=set_cmd: cmd())
         picker_label.bind("<Button-1>", lambda _e, cmd=set_cmd: cmd())
 
+        # Simple numeric trigger code field (currently used for MIDI note numbers).
+        trigger_value = ""
+        meta = modules.globals.quick_face_triggers[i]
+        if isinstance(meta, dict) and meta.get("type") == TriggerType.NOTE.value:
+            code = meta.get("code")
+            try:
+                trigger_value = str(int(code))
+            except Exception:
+                trigger_value = ""
+
+        trigger_var = ctk.StringVar(value=trigger_value)
+
+        def on_trigger_change(index: int, var: ctk.StringVar) -> None:
+            raw = var.get().strip()
+            if not raw:
+                modules.globals.quick_face_triggers[index] = None
+            else:
+                try:
+                    note = int(raw)
+                except ValueError:
+                    # Invalid value; reset field and binding.
+                    var.set("")
+                    modules.globals.quick_face_triggers[index] = None
+                else:
+                    if 0 <= note <= 127:
+                        modules.globals.quick_face_triggers[index] = {
+                            "type": TriggerType.NOTE.value,
+                            "code": note,
+                        }
+                    else:
+                        var.set("")
+                        modules.globals.quick_face_triggers[index] = None
+
+            # Persist any change along with other switches.
+            from modules.ui import save_switch_states
+
+            save_switch_states()
+
+        trigger_entry = ctk.CTkEntry(
+            QUICK_FACE_WINDOW,
+            width=60,
+            placeholder_text="MIDI",
+            textvariable=trigger_var,
+        )
+        trigger_entry.grid(row=row_index, column=2, padx=4, pady=6)
+        trigger_entry.bind(
+            "<FocusOut>", lambda _e, idx=i, v=trigger_var: on_trigger_change(idx, v)
+        )
+        trigger_entry.bind(
+            "<Return>", lambda _e, idx=i, v=trigger_var: on_trigger_change(idx, v)
+        )
+
         use_button = ctk.CTkButton(
             QUICK_FACE_WINDOW,
             text="Use",
             width=80,
             command=make_use_command(i),
         )
-        use_button.grid(row=i, column=2, padx=(8, 12), pady=6)
+        use_button.grid(row=row_index, column=3, padx=(4, 12), pady=6)
 
     refresh_quick_faces_thumbnails()
 

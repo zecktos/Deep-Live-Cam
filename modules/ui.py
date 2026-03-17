@@ -10,6 +10,8 @@ import json
 import modules.globals
 import modules.metadata
 from modules import ui_quick_switch
+from modules.extra.triggers import init_trigger_manager, register_source
+from modules.extra.midi_source import MidiTriggerSource
 from modules.face_analyser import (
     get_one_face,
     get_unique_faces_from_target_image,
@@ -138,6 +140,8 @@ def save_switch_states():
         "show_mouth_mask_box": modules.globals.show_mouth_mask_box,
         "source_slots": modules.globals.source_slots,
         "active_source_slot": modules.globals.active_source_slot,
+        "quick_face_triggers": modules.globals.quick_face_triggers,
+        "quick_face_midi_port": modules.globals.quick_face_midi_port,
     }
     with open("switch_states.json", "w") as f:
         json.dump(switch_states, f)
@@ -165,6 +169,12 @@ def load_switch_states():
         )
         modules.globals.source_slots = switch_states.get("source_slots", [None] * 10)
         modules.globals.active_source_slot = switch_states.get("active_source_slot", None)
+        modules.globals.quick_face_triggers = switch_states.get(
+            "quick_face_triggers", [None] * 10
+        )
+        modules.globals.quick_face_midi_port = switch_states.get(
+            "quick_face_midi_port", None
+        )
     except FileNotFoundError:
         # If the file doesn't exist, use default values
         pass
@@ -186,6 +196,14 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
     )
     root.configure()
     root.protocol("WM_DELETE_WINDOW", lambda: destroy())
+
+    # Initialize generic trigger manager and optional MIDI backend used by the
+    # Quick Faces window. Fail silently if trigger input is not available.
+    try:
+        init_trigger_manager(root)
+        register_source(MidiTriggerSource())
+    except Exception:
+        pass
 
     source_label = ctk.CTkLabel(root, text=None)
     source_label.place(relx=0.1, rely=0.05, relwidth=0.275, relheight=0.225)
