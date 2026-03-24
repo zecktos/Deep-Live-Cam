@@ -1,18 +1,20 @@
 import os
 import webbrowser
+import queue
+import threading
 import customtkinter as ctk
 from typing import Callable, Tuple
 import cv2
+from cv2_enumerate_cameras import enumerate_cameras  # Add this import
 from PIL import Image, ImageOps
 import time
 import json
 import modules.globals
 import modules.metadata
 from modules import ui_quick_switch
-from modules.extra.triggers import init_trigger_manager, register_source
-from modules.extra.midi_source import MidiTriggerSource
 from modules.face_analyser import (
     get_one_face,
+    get_many_faces,
     get_unique_faces_from_target_image,
     get_unique_faces_from_target_video,
     add_blank_map,
@@ -139,8 +141,6 @@ def save_switch_states():
         "show_mouth_mask_box": modules.globals.show_mouth_mask_box,
         "source_slots": modules.globals.source_slots,
         "active_source_slot": modules.globals.active_source_slot,
-        "quick_face_triggers": modules.globals.quick_face_triggers,
-        "quick_face_midi_port": modules.globals.quick_face_midi_port,
     }
     with open("switch_states.json", "w") as f:
         json.dump(switch_states, f)
@@ -168,12 +168,6 @@ def load_switch_states():
         )
         modules.globals.source_slots = switch_states.get("source_slots", [None] * 10)
         modules.globals.active_source_slot = switch_states.get("active_source_slot", None)
-        modules.globals.quick_face_triggers = switch_states.get(
-            "quick_face_triggers", [None] * 10
-        )
-        modules.globals.quick_face_midi_port = switch_states.get(
-            "quick_face_midi_port", None
-        )
     except FileNotFoundError:
         # If the file doesn't exist, use default values
         pass
@@ -195,14 +189,6 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
     )
     root.configure()
     root.protocol("WM_DELETE_WINDOW", lambda: destroy())
-
-    # Initialize generic trigger manager and optional MIDI backend used by the
-    # Quick Faces window. Fail silently if trigger input is not available.
-    try:
-        init_trigger_manager(root)
-        register_source(MidiTriggerSource())
-    except Exception:
-        pass
 
     source_label = ctk.CTkLabel(root, text=None)
     source_label.place(relx=0.1, rely=0.05, relwidth=0.275, relheight=0.225)
@@ -979,13 +965,21 @@ def get_available_cameras():
         camera_indices = []
         camera_names = []
 
-        if platform.system() == "Darwin":
-            # Do NOT probe cameras with cv2.VideoCapture on macOS — probing
-            # invalid indices triggers the OBSENSOR backend and causes SIGSEGV.
-            # Default to indices 0 and 1 (covers FaceTime + one USB camera).
-            # The user can select the correct index from the UI dropdown.
-            camera_indices = [0, 1]
-            camera_names = ["Camera 0", "Camera 1"]
+        if platform.system() == "Darwin":  # macOS specific handling
+            # Try to open the default FaceTime camera first
+            cap = cv2.VideoCapture(0)
+            if cap.isOpened():
+                camera_indices.append(0)
+                camera_names.append("FaceTime Camera")
+                cap.release()
+
+            # On macOS, additional cameras typically use indices 1 and 2
+            for i in [1, 2]:
+                cap = cv2.VideoCapture(i)
+                if cap.isOpened():
+                    camera_indices.append(i)
+                    camera_names.append(f"Camera {i}")
+                    cap.release()
         else:
             # Linux camera detection - test first 10 indices
             for i in range(10):
@@ -1001,59 +995,127 @@ def get_available_cameras():
         return camera_indices, camera_names
 
 
-def create_webcam_preview(camera_index: int):
-    global preview_label, PREVIEW, LIVE_SOURCE_FACE
+def _capture_thread_func(cap, capture_queue, stop_event):
+    """Continuously capture frames and keep only the latest frame in queue."""
+    while not stop_event.is_set():
+        ret, frame = cap.read()
+        if not ret:
+            stop_event.set()
+            break
+        try:
+            capture_queue.put_nowait(frame)
+        except queue.Full:
+            try:
+                capture_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                capture_queue.put_nowait(frame)
+            except queue.Full:
+                pass
 
-    cap = VideoCapturer(camera_index)
-    if not cap.start(PREVIEW_DEFAULT_WIDTH, PREVIEW_DEFAULT_HEIGHT, 60):
-        update_status("Failed to start camera")
-        return
 
-    preview_label.configure(width=PREVIEW_DEFAULT_WIDTH, height=PREVIEW_DEFAULT_HEIGHT)
-    PREVIEW.deiconify()
+def _detection_thread_func(latest_frame_holder, detection_result, detection_lock, stop_event):
+    """Run face detection asynchronously on the latest mirrored frame."""
+    last_frame_id = -1
+    last_detection_time = 0.0
+    min_detection_interval_s = 0.02  # cap detector cadence to reduce contention
 
-    frame_processors = get_frame_processors_modules(modules.globals.frame_processors)
+    while not stop_event.is_set():
+        with detection_lock:
+            frame = latest_frame_holder["frame"]
+            frame_id = latest_frame_holder["frame_id"]
+
+        # Avoid spinning when no new frame is available.
+        if frame is None or frame_id == last_frame_id:
+            time.sleep(0.005)
+            continue
+
+        # Keep detector from saturating resources; swap thread should stay responsive.
+        now = time.time()
+        elapsed = now - last_detection_time
+        if elapsed < min_detection_interval_s:
+            time.sleep(min_detection_interval_s - elapsed)
+
+        if modules.globals.many_faces:
+            many = get_many_faces(frame)
+            with detection_lock:
+                detection_result["target_face"] = None
+                detection_result["many_faces"] = many
+        else:
+            face = get_one_face(frame)
+            with detection_lock:
+                detection_result["target_face"] = face
+                detection_result["many_faces"] = None
+        last_frame_id = frame_id
+        last_detection_time = time.time()
+
+
+def _processing_thread_func(
+    capture_queue,
+    processed_queue,
+    stop_event,
+    frame_processors,
+    latest_frame_holder,
+    detection_result,
+    detection_lock,
+):
+    """Process frames using cached asynchronous detection results."""
+    global LIVE_SOURCE_FACE
+    last_source_path = None
     prev_time = time.time()
     fps_update_interval = 0.5
     frame_count = 0
     fps = 0
+    publish_frame_id = 0
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    while not stop_event.is_set():
+        try:
+            frame = capture_queue.get(timeout=0.03)
+        except queue.Empty:
+            continue
 
-        temp_frame = frame.copy()
-
+        temp_frame = frame
         if modules.globals.live_mirror:
             temp_frame = cv2.flip(temp_frame, 1)
 
-        if modules.globals.live_resizable:
-            temp_frame = fit_image_to_size(
-                temp_frame, PREVIEW.winfo_width(), PREVIEW.winfo_height()
-            )
-
-        else:
-            temp_frame = fit_image_to_size(
-                temp_frame, PREVIEW.winfo_width(), PREVIEW.winfo_height()
-            )
+        # Publish latest mirrored frame for detector thread.
+        # Use a copy to avoid data races with frame processing mutations.
+        with detection_lock:
+            publish_frame_id += 1
+            latest_frame_holder["frame"] = temp_frame.copy()
+            latest_frame_holder["frame_id"] = publish_frame_id
 
         if not modules.globals.map_faces:
-            # Lazily compute / recompute source face using current source_path.
-            if LIVE_SOURCE_FACE is None and modules.globals.source_path:
+            if modules.globals.source_path and modules.globals.source_path != last_source_path:
+                last_source_path = modules.globals.source_path
                 try:
-                    LIVE_SOURCE_FACE = get_one_face(
-                        cv2.imread(modules.globals.source_path)
-                    )
+                    LIVE_SOURCE_FACE = get_one_face(cv2.imread(modules.globals.source_path))
                 except Exception:
                     LIVE_SOURCE_FACE = None
+
+            with detection_lock:
+                cached_target_face = detection_result.get("target_face")
+                cached_many_faces = detection_result.get("many_faces")
 
             for frame_processor in frame_processors:
                 if frame_processor.NAME == "DLC.FACE-ENHANCER":
                     if modules.globals.fp_ui["face_enhancer"]:
                         temp_frame = frame_processor.process_frame(None, temp_frame)
                 else:
-                    temp_frame = frame_processor.process_frame(LIVE_SOURCE_FACE, temp_frame)
+                    # Keep compatibility: default to source face; if implementation
+                    # supports many-face swapping, pass detector output when available.
+                    if modules.globals.many_faces and cached_many_faces is not None:
+                        try:
+                            temp_frame = frame_processor.process_frame_v2(temp_frame)
+                        except Exception:
+                            temp_frame = frame_processor.process_frame(
+                                LIVE_SOURCE_FACE or cached_target_face, temp_frame
+                            )
+                    else:
+                        temp_frame = frame_processor.process_frame(
+                            LIVE_SOURCE_FACE or cached_target_face, temp_frame
+                        )
         else:
             modules.globals.target_path = None
             for frame_processor in frame_processors:
@@ -1063,7 +1125,7 @@ def create_webcam_preview(camera_index: int):
                 else:
                     temp_frame = frame_processor.process_frame_v2(temp_frame)
 
-        # Calculate and display FPS
+        # Calculate FPS.
         current_time = time.time()
         frame_count += 1
         if current_time - prev_time >= fps_update_interval:
@@ -1082,9 +1144,99 @@ def create_webcam_preview(camera_index: int):
                 2,
             )
 
-        # If a global NDI sender is available, mirror the processed frame.
-        if NDI_SENDER is not None :
+        if NDI_SENDER is not None:
             NDI_SENDER.send_frame(temp_frame)
+
+        try:
+            processed_queue.put_nowait(temp_frame)
+        except queue.Full:
+            try:
+                processed_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                processed_queue.put_nowait(temp_frame)
+            except queue.Full:
+                pass
+
+
+def create_webcam_preview(camera_index: int):
+    global preview_label, PREVIEW, LIVE_SOURCE_FACE
+
+    cap = VideoCapturer(camera_index)
+    if not cap.start(PREVIEW_DEFAULT_WIDTH, PREVIEW_DEFAULT_HEIGHT, 60):
+        update_status("Failed to start camera")
+        return
+
+    preview_label.configure(width=PREVIEW_DEFAULT_WIDTH, height=PREVIEW_DEFAULT_HEIGHT)
+    PREVIEW.deiconify()
+
+    frame_processors = get_frame_processors_modules(modules.globals.frame_processors)
+    capture_queue = queue.Queue(maxsize=2)
+    processed_queue = queue.Queue(maxsize=2)
+    stop_event = threading.Event()
+
+    # Shared state for async detection pipeline.
+    detection_lock = threading.Lock()
+    latest_frame_holder = {"frame": None, "frame_id": 0}
+    detection_result = {"target_face": None, "many_faces": None}
+
+    cap_thread = threading.Thread(
+        target=_capture_thread_func,
+        args=(cap, capture_queue, stop_event),
+        daemon=True,
+    )
+    cap_thread.start()
+
+    det_thread = threading.Thread(
+        target=_detection_thread_func,
+        args=(latest_frame_holder, detection_result, detection_lock, stop_event),
+        daemon=True,
+    )
+    det_thread.start()
+
+    proc_thread = threading.Thread(
+        target=_processing_thread_func,
+        args=(
+            capture_queue,
+            processed_queue,
+            stop_event,
+            frame_processors,
+            latest_frame_holder,
+            detection_result,
+            detection_lock,
+        ),
+        daemon=True,
+    )
+    proc_thread.start()
+
+    def _cleanup():
+        stop_event.set()
+        cap_thread.join(timeout=2.0)
+        det_thread.join(timeout=2.0)
+        proc_thread.join(timeout=2.0)
+        cap.release()
+        PREVIEW.withdraw()
+
+    def _display_next_frame():
+        if stop_event.is_set() or PREVIEW.state() == "withdrawn":
+            _cleanup()
+            return
+
+        try:
+            temp_frame = processed_queue.get_nowait()
+        except queue.Empty:
+            ROOT.after(16, _display_next_frame)
+            return
+
+        if modules.globals.live_resizable:
+            temp_frame = fit_image_to_size(
+                temp_frame, PREVIEW.winfo_width(), PREVIEW.winfo_height()
+            )
+        else:
+            temp_frame = fit_image_to_size(
+                temp_frame, PREVIEW.winfo_width(), PREVIEW.winfo_height()
+            )
 
         image = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(image)
@@ -1093,13 +1245,9 @@ def create_webcam_preview(camera_index: int):
         )
         image = ctk.CTkImage(image, size=image.size)
         preview_label.configure(image=image)
-        ROOT.update()
+        ROOT.after(16, _display_next_frame)
 
-        if PREVIEW.state() == "withdrawn":
-            break
-
-    cap.release()
-    PREVIEW.withdraw()
+    ROOT.after(0, _display_next_frame)
 
 
 def create_source_target_popup_for_webcam(
