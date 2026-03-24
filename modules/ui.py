@@ -965,21 +965,13 @@ def get_available_cameras():
         camera_indices = []
         camera_names = []
 
-        if platform.system() == "Darwin":  # macOS specific handling
-            # Try to open the default FaceTime camera first
-            cap = cv2.VideoCapture(0)
-            if cap.isOpened():
-                camera_indices.append(0)
-                camera_names.append("FaceTime Camera")
-                cap.release()
-
-            # On macOS, additional cameras typically use indices 1 and 2
-            for i in [1, 2]:
-                cap = cv2.VideoCapture(i)
-                if cap.isOpened():
-                    camera_indices.append(i)
-                    camera_names.append(f"Camera {i}")
-                    cap.release()
+        if platform.system() == "Darwin":
+            # Do NOT probe cameras with cv2.VideoCapture on macOS — probing
+            # invalid indices triggers the OBSENSOR backend and causes SIGSEGV.
+            # Default to indices 0 and 1 (covers FaceTime + one USB camera).
+            # The user can select the correct index from the UI dropdown.
+            camera_indices = [0, 1]
+            camera_names = ["Camera 0", "Camera 1"]
         else:
             # Linux camera detection - test first 10 indices
             for i in range(10):
