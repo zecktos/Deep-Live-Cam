@@ -572,9 +572,6 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
     donate_label.configure(
         text_color=ctk.ThemeManager.theme.get("URL").get("text_color")
     )
-    donate_label.bind(
-        "<Button>", lambda event: webbrowser.open("https://deeplivecam.net")
-    )
 
     return root
 
