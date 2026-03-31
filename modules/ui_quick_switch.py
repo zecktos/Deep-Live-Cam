@@ -288,11 +288,16 @@ def activate_quick_face_slot(
         update_status(f"Slot {slot_index + 1} has no valid image configured.")
         return
 
-    modules.globals.source_path = path
+    if path != modules.globals.source_path:
+        modules.globals.source_path = path
+        is_new_path = True
+    else:
+        is_new_path = False
     modules.globals.active_source_slot = slot_index
     save_switch_states()
 
-    invalidate_live_source_face()
+    if is_new_path:
+        invalidate_live_source_face()
 
     try:
         set_source_preview_image(path)
