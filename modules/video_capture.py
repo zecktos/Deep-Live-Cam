@@ -3,7 +3,7 @@ import numpy as np
 from typing import Optional, Tuple, Callable
 import platform
 import threading
-
+from modules.globals import force_cam_resolution,cam_resolution_width, cam_resolution_height, cam_resolution_fps
 # Only import Windows-specific library if on Windows
 if platform.system() == "Windows":
     from pygrabber.dshow_graph import FilterGraph
@@ -56,9 +56,19 @@ class VideoCapturer:
                 raise RuntimeError("Failed to open camera")
 
             # Configure format
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            self.cap.set(cv2.CAP_PROP_FPS, fps)
+            if force_cam_resolution :
+                set_with_ret = self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_resolution_width)
+                set_height_ret = self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_resolution_height)
+                set_fps_ret = self.cap.set(cv2.CAP_PROP_FPS, cam_resolution_fps)
+            else :
+                set_with_ret = self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                set_height_ret = self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                set_fps_ret = self.cap.set(cv2.CAP_PROP_FPS, fps)
+            print("forced camera resolution: ", force_cam_resolution)
+            print("success set width/height/fps",set_with_ret,"/", set_height_ret,"/",set_fps_ret)
+            print("camera width/height: ", self.cap.get(3),"/", self.cap.get(4))
+            print("fps: ", self.cap.set(cv2.CAP_PROP_FPS, fps))
+           
 
             self.is_running = True
             return True

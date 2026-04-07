@@ -61,6 +61,12 @@ sharpness: float = 0.0            # Sharpness enhancement for swapped face (0.0-
 source_slots: list[str | None] = [None] * 10  # Up to 10 preconfigured source images
 active_source_slot: int | None = None         # Currently selected quick slot index (0-9)
 
+# camera input options
+force_cam_resolution: bool = True
+cam_resolution_width: int = 720
+cam_resolution_height: int = 480
+cam_resolution_fps: int = 60
+
 # Generic trigger bindings for quick face slots.
 # Each entry can hold backend-agnostic trigger metadata (e.g. MIDI note number, key code, OSC address).
 quick_face_triggers: list[dict | None] = [None] * 10
