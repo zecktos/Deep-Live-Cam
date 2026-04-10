@@ -62,7 +62,7 @@ source_slots: list[str | None] = [None] * 10  # Up to 10 preconfigured source im
 active_source_slot: int | None = None         # Currently selected quick slot index (0-9)
 
 # camera input options
-force_cam_resolution: bool = True
+force_cam_resolution: bool = False
 cam_resolution_width: int = 720
 cam_resolution_height: int = 480
 cam_resolution_fps: int = 60

@@ -79,8 +79,8 @@ class MidiTriggerSource(TriggerSource):
                 self._stop.wait(0.01)
                 continue
 
-            # We only care about note_on with velocity > 0 for now.
-            if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
+            # We only care about note_on
+            if msg.type == "note_on" :
                 note = int(getattr(msg, "note", 0))
                 vel = float(getattr(msg, "velocity", 0))
                 event = TriggerEvent(type=TriggerType.NOTE, code=note, value=vel)
