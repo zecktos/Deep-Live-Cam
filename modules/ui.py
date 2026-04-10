@@ -565,6 +565,7 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
     status_label = ctk.CTkLabel(root, text=None, justify="center")
     status_label.place(relx=0.1, rely=0.96, relwidth=0.8)
 
+    """
     donate_label = ctk.CTkLabel(
         root, text="Deep Live Cam", justify="center", cursor="hand2"
     )
@@ -572,7 +573,7 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
     donate_label.configure(
         text_color=ctk.ThemeManager.theme.get("URL").get("text_color")
     )
-
+    """
     return root
 
 
