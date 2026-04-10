@@ -433,11 +433,11 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
     stop_button.place(relx=0.27, rely=0.86, relwidth=0.18, relheight=0.05)
     ToolTip(stop_button, _("Stop processing and close the application"))
 
-    preview_button = ctk.CTkButton(
-        root, text=_("Preview"), cursor="hand2", command=lambda: toggle_preview()
+    fullscreen_button = ctk.CTkButton(
+        root, text=_("Fullscreen"), cursor="hand2", command=lambda: live_preview_fullscreen()
     )
-    preview_button.place(relx=0.49, rely=0.86, relwidth=0.18, relheight=0.05)
-    ToolTip(preview_button, _("Show/hide a preview of the processed output"))
+    fullscreen_button.place(relx=0.49, rely=0.86, relwidth=0.18, relheight=0.05)
+    ToolTip(fullscreen_button, _("set live preview to fullscreen"))
     
     quick_faces_button = ctk.CTkButton(
         root,
@@ -585,6 +585,12 @@ def close_mapper_window():
         POPUP_LIVE.destroy()
         POPUP_LIVE = None
 
+def live_preview_fullscreen():
+    #print("fullscreen button pressed")
+    if PREVIEW and PREVIEW.winfo_exists() :
+        #print("set to fullscreen")
+        state = PREVIEW.attributes('-fullscreen')
+        PREVIEW.attributes("-fullscreen", not state)
 
 def analyze_target(start: Callable[[], None], root: ctk.CTk):
     if POPUP != None and POPUP.winfo_exists():
