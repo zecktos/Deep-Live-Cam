@@ -100,25 +100,25 @@ def handle_trigger(event: TriggerEvent) -> None:
     if slot_index is None:
         # check for magic values to trigger hacky opacity fade
         if event.code == 126 or event.code == 127 :
-            def opacity_fade(sec, target) :
-                if target > 0 :
-                    target = 1
+            def opacity_fade(sec, startVal) :
+                if startVal > 0 :
+                    startVal = 1
                     print("fade to 1")
                 else :
-                    target = 0
+                    startVal = 0
                     print("fade to 0")
                 print("fade time:", sec)
                 if sec <= 0 :
-                    transparency_change(target)
+                    transparency_change(abs(startVal - 1))
                     return
                 if sec > 20 :
                     sec = 20
 
                 s = 0.5/sec
-                v = target
+                v = startVal
                 transparency_change(v)
                 for t in range(0,int(sec*2)) :
-                    if target == 1 :
+                    if startVal == 1 :
                         v = v - s
                     else :
                          v = v + s
