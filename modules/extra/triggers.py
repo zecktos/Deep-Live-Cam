@@ -96,7 +96,9 @@ def handle_trigger(event: TriggerEvent) -> None:
         return
     
     slot_index = _match_event_to_slot(event)
-
+    print("")
+    print("midi note pitch: ", event.code)
+    print("midi note velocity: ", event.value)
     if slot_index is None:
         # check for magic values to trigger hacky opacity fade
         if event.code == 126 or event.code == 127 :
@@ -123,9 +125,9 @@ def handle_trigger(event: TriggerEvent) -> None:
                     else :
                          v = v + s
                     transparency_change(v)
-                    print("value", v)
+                    #print("value", v)
                     sleep(0.5)
-                print("thread exit")
+                print("fade end | thread exit")
 
             def _activate() -> None:
                 global activeFadeThread
