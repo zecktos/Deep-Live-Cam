@@ -105,10 +105,10 @@ def handle_trigger(event: TriggerEvent) -> None:
             def opacity_fade(sec, startVal) :
                 if startVal > 0 :
                     startVal = 1
-                    print("fade to 1")
+                    print("fade to 0")
                 else :
                     startVal = 0
-                    print("fade to 0")
+                    print("fade to 1")
                 print("fade time:", sec)
                 if sec <= 0 :
                     transparency_change(abs(startVal - 1))
